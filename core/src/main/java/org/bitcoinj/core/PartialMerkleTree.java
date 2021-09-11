@@ -117,12 +117,12 @@ public class PartialMerkleTree extends Message {
     protected void parse() throws ProtocolException {
         transactionCount = (int)readUint32();
 
-        int nHashes = readVarInt().intValue();
+        int nHashes = (int) readVarInt();
         hashes = new ArrayList<>(Math.min(nHashes, Utils.MAX_INITIAL_ARRAY_LENGTH));
         for (int i = 0; i < nHashes; i++)
             hashes.add(readHash());
 
-        int nFlagBytes = readVarInt().intValue();
+        int nFlagBytes = (int) readVarInt();
         matchedChildBits = readBytes(nFlagBytes);
 
         length = cursor - offset;

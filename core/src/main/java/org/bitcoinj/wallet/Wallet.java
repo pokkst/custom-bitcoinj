@@ -76,7 +76,6 @@ import javax.annotation.*;
 import java.io.*;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
-import java.text.DecimalFormat;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
@@ -4040,11 +4039,11 @@ public class Wallet extends BaseTaggableObject
         }
     }
 
-    public Transaction sendCustomCoinsOffline(SendRequest request)
+    public Transaction sendCoinsOfflineCustom(SendRequest request)
             throws InsufficientMoneyException, BadWalletEncryptionKeyException {
         lock.lock();
         try {
-            completeCustomTx(request);
+            completeTxCustom(request);
             commitTx(request.tx);
             return request.tx;
         } finally {
@@ -4125,7 +4124,7 @@ public class Wallet extends BaseTaggableObject
         return result;
     }
 
-    public SendResult sendCustomCoins(TransactionBroadcaster broadcaster, SendRequest request)
+    public SendResult sendCoinsCustom(TransactionBroadcaster broadcaster, SendRequest request)
             throws InsufficientMoneyException, BadWalletEncryptionKeyException {
         // Should not be locked here, as we're going to call into the broadcaster and that might want to hold its
         // own lock. sendCoinsOffline handles everything that needs to be locked.
@@ -4133,7 +4132,7 @@ public class Wallet extends BaseTaggableObject
 
         // Commit the TX to the wallet immediately so the spent coins won't be reused.
         // TODO: We should probably allow the request to specify tx commit only after the network has accepted it.
-        Transaction tx = sendCustomCoinsOffline(request);
+        Transaction tx = sendCoinsOfflineCustom(request);
         SendResult result = new SendResult(tx, broadcaster.broadcastTransaction(tx));
         // The tx has been committed to the pending pool by this point (via sendCoinsOffline -> commitTx), so it has
         // a txConfidenceListener registered. Once the tx is broadcast the peers will update the memory pool with the
@@ -4165,11 +4164,11 @@ public class Wallet extends BaseTaggableObject
         return sendCoins(broadcaster, request);
     }
 
-    public SendResult sendCustomCoins(SendRequest request)
+    public SendResult sendCoinsCustom(SendRequest request)
             throws InsufficientMoneyException, BadWalletEncryptionKeyException {
         TransactionBroadcaster broadcaster = vTransactionBroadcaster;
         checkState(broadcaster != null, "No transaction broadcaster is configured");
-        return sendCustomCoins(broadcaster, request);
+        return sendCoinsCustom(broadcaster, request);
     }
 
     /**
@@ -4300,6 +4299,9 @@ public class Wallet extends BaseTaggableObject
                 bestChangeOutput = feeCalculation.bestChangeOutput;
                 updatedOutputValues = feeCalculation.updatedOutputValues;
             } else {
+                // We're being asked to empty the wallet. What this means is ensuring "tx" has only a single output
+                // of the total value we can currently spend as determined by the selector, and then subtracting the fee.
+                checkState(req.tx.getOutputs().size() == 1, "Empty wallet TX must have a single output only.");
                 CoinSelector selector = req.coinSelector == null ? coinSelector : req.coinSelector;
                 bestCoinSelection = selector.select(params.getMaxMoney(), candidates);
                 candidates = null;  // Selector took ownership and might have changed candidates. Don't access again.
@@ -4357,7 +4359,7 @@ public class Wallet extends BaseTaggableObject
         }
     }
 
-    public void completeCustomTx(SendRequest req) throws InsufficientMoneyException, BadWalletEncryptionKeyException {
+    public void completeTxCustom(SendRequest req) throws InsufficientMoneyException, BadWalletEncryptionKeyException {
         lock.lock();
         try {
             checkArgument(!req.completed, "Given SendRequest has already been completed.");

@@ -1,9 +1,8 @@
 buildscript {
     repositories {
-        jcenter()
-        maven { url "https://jitpack.io" }
         mavenCentral()
     }
+
     dependencies {
         classpath 'com.google.protobuf:protobuf-gradle-plugin:0.8.10'
     }
@@ -11,8 +10,6 @@ buildscript {
 
 allprojects {
     repositories {
-        jcenter()
-        maven { url "https://jitpack.io" }
         mavenCentral()
     }
 

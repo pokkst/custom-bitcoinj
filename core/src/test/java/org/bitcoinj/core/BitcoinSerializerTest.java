@@ -22,7 +22,6 @@ import org.bitcoinj.params.TestNet3Params;
 import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
-import java.math.BigInteger;
 import java.net.InetAddress;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
@@ -67,17 +66,11 @@ public class BitcoinSerializerTest {
         assertEquals("10.0.0.1", peerAddress.getAddr().getHostAddress());
         ByteArrayOutputStream bos = new ByteArrayOutputStream(ADDRESS_MESSAGE_BYTES.length);
         serializer.serialize(addressMessage, bos);
+
         assertEquals(31, addressMessage.getMessageSize());
-
-        addressMessage.addAddress(new PeerAddress(MAINNET, InetAddress.getLocalHost(), MAINNET.getPort(),
-                BigInteger.ZERO, serializer.withProtocolVersion(1)));
-        bos = new ByteArrayOutputStream(61);
-        serializer.serialize(addressMessage, bos);
+        addressMessage.addAddress(new PeerAddress(MAINNET, InetAddress.getLocalHost()));
         assertEquals(61, addressMessage.getMessageSize());
-
         addressMessage.removeAddress(0);
-        bos = new ByteArrayOutputStream(31);
-        serializer.serialize(addressMessage, bos);
         assertEquals(31, addressMessage.getMessageSize());
 
         //this wont be true due to dynamic timestamps.

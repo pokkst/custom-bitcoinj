@@ -1,7 +1,7 @@
 plugins {
     id 'java-library'
     id 'com.google.protobuf'
-    id 'maven-publish'
+    id 'maven'
     id 'eclipse'
 }
 
