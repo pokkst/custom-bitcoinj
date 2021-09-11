@@ -4275,7 +4275,9 @@ public class Wallet extends BaseTaggableObject
                 Coin userAmount = Coin.parseCoin(userAmountString);
                 candidates = null;  // Selector took ownership and might have changed candidates. Don't access again.
                 req.tx.getOutput(0).setValue(userAmount);
-                req.tx.getOutput(1).setValue(feeAmount);
+                if(req.tx.getOutputs().size() > 1) {
+                    req.tx.getOutput(1).setValue(feeAmount);
+                }
                 log.info("  emptying {}", balance.toFriendlyString());
             }
 
