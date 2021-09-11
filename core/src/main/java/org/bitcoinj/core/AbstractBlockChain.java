@@ -18,6 +18,7 @@
 package org.bitcoinj.core;
 
 import com.google.common.base.*;
+import com.google.common.collect.*;
 import com.google.common.util.concurrent.*;
 import org.bitcoinj.core.listeners.*;
 import org.bitcoinj.script.ScriptException;
@@ -78,7 +79,7 @@ import static com.google.common.base.Preconditions.*;
  */
 public abstract class AbstractBlockChain {
     private static final Logger log = LoggerFactory.getLogger(AbstractBlockChain.class);
-    protected final ReentrantLock lock = Threading.lock(AbstractBlockChain.class);
+    protected final ReentrantLock lock = Threading.lock("blockchain");
 
     /** Keeps a map of block hashes to StoredBlocks. */
     private final BlockStore blockStore;
@@ -112,8 +113,8 @@ public abstract class AbstractBlockChain {
         final Map<Sha256Hash, Transaction> filteredTxn;
         OrphanBlock(Block block, @Nullable List<Sha256Hash> filteredTxHashes, @Nullable Map<Sha256Hash, Transaction> filteredTxn) {
             final boolean filtered = filteredTxHashes != null && filteredTxn != null;
-            Preconditions.checkArgument((block.getTransactions() == null && filtered)
-                                        || (block.getTransactions() != null && !filtered));
+            Preconditions.checkArgument((block.transactions == null && filtered)
+                                        || (block.transactions != null && !filtered));
             this.block = block;
             this.filteredTxHashes = filteredTxHashes;
             this.filteredTxn = filteredTxn;
@@ -417,7 +418,7 @@ public abstract class AbstractBlockChain {
             }
 
             // If we want to verify transactions (ie we are running with full blocks), verify that block has transactions
-            if (shouldVerifyTransactions() && block.getTransactions() == null)
+            if (shouldVerifyTransactions() && block.transactions == null)
                 throw new VerificationException("Got a block header while running in full-block mode");
 
             // Check for already-seen block, but only for full pruned mode, where the DB is
@@ -460,18 +461,18 @@ public abstract class AbstractBlockChain {
                 checkState(tryConnecting, "bug in tryConnectingOrphans");
                 log.warn("Block does not connect: {} prev {}", block.getHashAsString(), block.getPrevBlockHash());
                 orphanBlocks.put(block.getHash(), new OrphanBlock(block, filteredTxHashList, filteredTxn));
-                if (tryConnecting)
-                    tryConnectingOrphans();
                 return false;
             } else {
                 checkState(lock.isHeldByCurrentThread());
                 // It connects to somewhere on the chain. Not necessarily the top of the best known chain.
                 params.checkDifficultyTransitions(storedPrev, block, blockStore);
                 connectBlock(block, storedPrev, shouldVerifyTransactions(), filteredTxHashList, filteredTxn);
-                if (tryConnecting)
-                    tryConnectingOrphans();
-                return true;
             }
+
+            if (tryConnecting)
+                tryConnectingOrphans();
+
+            return true;
         } finally {
             lock.unlock();
         }
@@ -505,7 +506,8 @@ public abstract class AbstractBlockChain {
         if (!params.passesCheckpoint(storedPrev.getHeight() + 1, block.getHash()))
             throw new VerificationException("Block failed checkpoint lockin at " + (storedPrev.getHeight() + 1));
         if (shouldVerifyTransactions()) {
-            for (Transaction tx : block.getTransactions())
+            checkNotNull(block.transactions);
+            for (Transaction tx : block.transactions)
                 if (!tx.isFinal(storedPrev.getHeight() + 1, block.getTimeSeconds()))
                    throw new VerificationException("Block contains non-final transaction");
         }
@@ -538,7 +540,7 @@ public abstract class AbstractBlockChain {
             if (shouldVerifyTransactions())
                 txOutChanges = connectTransactions(storedPrev.getHeight() + 1, block);
             StoredBlock newStoredBlock = addToBlockStore(storedPrev,
-                    block.getTransactions() == null ? block : block.cloneAsHeader(), txOutChanges);
+                    block.transactions == null ? block : block.cloneAsHeader(), txOutChanges);
             versionTally.add(block.getVersion());
             setChainHead(newStoredBlock);
             if (log.isDebugEnabled())
@@ -581,7 +583,7 @@ public abstract class AbstractBlockChain {
             // We may not have any transactions if we received only a header, which can happen during fast catchup.
             // If we do, send them to the wallet but state that they are on a side chain so it knows not to try and
             // spend them until they become activated.
-            if (block.getTransactions() != null || filtered) {
+            if (block.transactions != null || filtered) {
                 informListenersForNewBlock(block, NewBlockType.SIDE_CHAIN, filteredTxHashList, filteredTxn, newBlock);
             }
             
@@ -598,7 +600,7 @@ public abstract class AbstractBlockChain {
         // (in the case of the listener being a wallet). Wallets need to know how deep each transaction is so
         // coinbases aren't used before maturity.
         boolean first = true;
-        Set<Sha256Hash> falsePositives = new HashSet<>();
+        Set<Sha256Hash> falsePositives = Sets.newHashSet();
         if (filteredTxHashList != null) falsePositives.addAll(filteredTxHashList);
 
         for (final ListenerRegistration<TransactionReceivedInBlockListener> registration : transactionReceivedListeners) {
@@ -613,7 +615,7 @@ public abstract class AbstractBlockChain {
                     public void run() {
                         try {
                             // We can't do false-positive handling when executing on another thread
-                            Set<Sha256Hash> ignoredFalsePositives = new HashSet<>();
+                            Set<Sha256Hash> ignoredFalsePositives = Sets.newHashSet();
                             informListenerForNewTransactions(block, newBlockType, filteredTxHashList, filteredTxn,
                                     newStoredBlock, notFirst, registration.listener, ignoredFalsePositives);
                         } catch (VerificationException e) {
@@ -661,13 +663,13 @@ public abstract class AbstractBlockChain {
                                                          StoredBlock newStoredBlock, boolean first,
                                                          TransactionReceivedInBlockListener listener,
                                                          Set<Sha256Hash> falsePositives) throws VerificationException {
-        if (block.getTransactions() != null) {
+        if (block.transactions != null) {
             // If this is not the first wallet, ask for the transactions to be duplicated before being given
             // to the wallet when relevant. This ensures that if we have two connected wallets and a tx that
             // is relevant to both of them, they don't end up accidentally sharing the same object (which can
             // result in temporary in-memory corruption during re-orgs). See bug 257. We only duplicate in
             // the case of multiple wallets to avoid an unnecessary efficiency hit in the common case.
-            sendTransactionsToListener(newStoredBlock, newBlockType, listener, 0, block.getTransactions(),
+            sendTransactionsToListener(newStoredBlock, newBlockType, listener, 0, block.transactions,
                     !first, falsePositives);
         } else if (filteredTxHashList != null) {
             checkNotNull(filteredTxn);
@@ -799,10 +801,11 @@ public abstract class AbstractBlockChain {
         checkArgument(higher.getHeight() > lower.getHeight(), "higher and lower are reversed");
         LinkedList<StoredBlock> results = new LinkedList<>();
         StoredBlock cursor = higher;
-        do {
+        while (true) {
             results.add(cursor);
             cursor = checkNotNull(cursor.getPrev(store), "Ran off the end of the chain");
-        } while (!cursor.equals(lower));
+            if (cursor.equals(lower)) break;
+        }
         return results;
     }
 

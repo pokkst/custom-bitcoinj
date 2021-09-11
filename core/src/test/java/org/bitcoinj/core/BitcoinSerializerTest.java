@@ -18,7 +18,6 @@
 package org.bitcoinj.core;
 
 import org.bitcoinj.params.MainNetParams;
-import org.bitcoinj.params.TestNet3Params;
 import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
@@ -117,7 +116,7 @@ public class BitcoinSerializerTest {
         assertTrue(transaction.isCached());
         bos = new ByteArrayOutputStream();
         serializer.serialize(transaction, bos);
-        assertArrayEquals(TRANSACTION_MESSAGE_BYTES, bos.toByteArray());
+        assertTrue(Arrays.equals(TRANSACTION_MESSAGE_BYTES, bos.toByteArray()));
 
         // deserialize/reserialize to check for equals.  Set a field to it's existing value to trigger uncache
         transaction = (Transaction) serializer.deserialize(ByteBuffer.wrap(TRANSACTION_MESSAGE_BYTES));
@@ -128,7 +127,7 @@ public class BitcoinSerializerTest {
 
         bos = new ByteArrayOutputStream();
         serializer.serialize(transaction, bos);
-        assertArrayEquals(TRANSACTION_MESSAGE_BYTES, bos.toByteArray());
+        assertTrue(Arrays.equals(TRANSACTION_MESSAGE_BYTES, bos.toByteArray()));
     }
 
     /**
@@ -235,12 +234,5 @@ public class BitcoinSerializerTest {
         };
         ByteArrayOutputStream bos = new ByteArrayOutputStream(ADDRESS_MESSAGE_BYTES.length);
         serializer.serialize(unknownMessage, bos);
-    }
-
-    @Test
-    public void testEquals() {
-        assertTrue(MAINNET.getDefaultSerializer().equals(MAINNET.getDefaultSerializer()));
-        assertFalse(MAINNET.getDefaultSerializer().equals(TestNet3Params.get().getDefaultSerializer()));
-        assertFalse(MAINNET.getDefaultSerializer().equals(MAINNET.getDefaultSerializer().withProtocolVersion(0)));
     }
 }

@@ -18,7 +18,6 @@ package wallettemplate;
 
 import com.google.common.util.concurrent.*;
 import javafx.scene.input.*;
-import org.bitcoinj.utils.AppDataDirectory;
 import org.bitcoinj.core.NetworkParameters;
 import org.bitcoinj.core.Utils;
 import org.bitcoinj.kits.WalletAppKit;
@@ -47,7 +46,7 @@ import java.net.URL;
 import static wallettemplate.utils.GuiUtils.*;
 
 public class Main extends Application {
-    public static NetworkParameters params = TestNet3Params.get();
+    public static NetworkParameters params = MainNetParams.get();
     public static final Script.ScriptType PREFERRED_OUTPUT_SCRIPT_TYPE = Script.ScriptType.P2WPKH;
     public static final String APP_NAME = "WalletTemplate";
     private static final String WALLET_FILE_NAME = APP_NAME.replaceAll("[^a-zA-Z0-9.-]", "_") + "-"
@@ -135,10 +134,12 @@ public class Main extends Application {
 
     public void setupWalletKit(@Nullable DeterministicSeed seed) {
         // If seed is non-null it means we are restoring from backup.
-        File appDataDirectory = AppDataDirectory.get(APP_NAME).toFile();
-        bitcoin = new WalletAppKit(params, PREFERRED_OUTPUT_SCRIPT_TYPE, null, appDataDirectory, WALLET_FILE_NAME) {
+        bitcoin = new WalletAppKit(params, PREFERRED_OUTPUT_SCRIPT_TYPE, null, new File("."), WALLET_FILE_NAME) {
             @Override
             protected void onSetupCompleted() {
+                // Don't make the user wait for confirmations for now, as the intention is they're sending it
+                // their own money!
+                bitcoin.wallet().allowSpendingUnconfirmedTransactions();
                 Platform.runLater(controller::onBitcoinSetup);
             }
         };
@@ -209,7 +210,7 @@ public class Main extends Application {
 
     public <T> OverlayUI<T> overlayUI(Node node, T controller) {
         checkGuiThread();
-        OverlayUI<T> pair = new OverlayUI<>(node, controller);
+        OverlayUI<T> pair = new OverlayUI<T>(node, controller);
         // Auto-magically set the overlayUI member, if it's there.
         try {
             controller.getClass().getField("overlayUI").set(controller, pair);
@@ -228,7 +229,7 @@ public class Main extends Application {
             FXMLLoader loader = new FXMLLoader(location);
             Pane ui = loader.load();
             T controller = loader.getController();
-            OverlayUI<T> pair = new OverlayUI<>(ui, controller);
+            OverlayUI<T> pair = new OverlayUI<T>(ui, controller);
             // Auto-magically set the overlayUI member, if it's there.
             try {
                 if (controller != null)

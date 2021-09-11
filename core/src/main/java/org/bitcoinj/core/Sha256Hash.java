@@ -121,8 +121,11 @@ public class Sha256Hash implements Serializable, Comparable<Sha256Hash> {
      * @throws IOException if an error occurs while reading the file
      */
     public static Sha256Hash of(File file) throws IOException {
-        try (FileInputStream in = new FileInputStream(file)) {
+        FileInputStream in = new FileInputStream(file);
+        try {
             return of(ByteStreams.toByteArray(in));
+        } finally {
+            in.close();
         }
     }
 

@@ -20,7 +20,6 @@ package org.bitcoinj.core;
 import com.google.common.annotations.*;
 import com.google.common.base.*;
 import com.google.common.collect.*;
-import org.bitcoinj.params.AbstractBitcoinNetParams;
 import org.bitcoinj.script.*;
 import org.slf4j.*;
 
@@ -99,8 +98,8 @@ public class Block extends Message {
     private long difficultyTarget; // "nBits"
     private long nonce;
 
-    // If null, it means this object holds only the headers.
-    @VisibleForTesting
+    // TODO: Get rid of all the direct accesses to this field. It's a long-since unnecessary holdover from the Dalvik days.
+    /** If null, it means this object holds only the headers. */
     @Nullable List<Transaction> transactions;
 
     /** Stores the hash of the block. If null, getHash() will recalculate it. */
@@ -207,10 +206,18 @@ public class Block extends Message {
         this.transactions.addAll(transactions);
     }
 
-    /** @deprecated Use {@link AbstractBitcoinNetParams#getBlockInflation(int)} */
-    @Deprecated
+
+    /**
+     * <p>A utility method that calculates how much new Bitcoin would be created by the block at the given height.
+     * The inflation of Bitcoin is predictable and drops roughly every 4 years (210,000 blocks). At the dawn of
+     * the system it was 50 coins per block, in late 2012 it went to 25 coins per block, and so on. The size of
+     * a coinbase transaction is inflation plus fees.</p>
+     *
+     * <p>The half-life is controlled by {@link NetworkParameters#getSubsidyDecreaseBlockCount()}.
+     * </p>
+     */
     public Coin getBlockInflation(int height) {
-        return ((AbstractBitcoinNetParams) params).getBlockInflation(height);
+        return FIFTY_COINS.shiftRight(height / params.getSubsidyDecreaseBlockCount());
     }
 
     /**
@@ -297,9 +304,11 @@ public class Block extends Message {
             return;
         }
 
-        stream.write(new VarInt(transactions.size()).encode());
-        for (Transaction tx : transactions) {
-            tx.bitcoinSerialize(stream);
+        if (transactions != null) {
+            stream.write(new VarInt(transactions.size()).encode());
+            for (Transaction tx : transactions) {
+                tx.bitcoinSerialize(stream);
+            }
         }
     }
 

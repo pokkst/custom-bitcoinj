@@ -44,7 +44,7 @@ public class KeyDerivationTasks {
     private volatile int timeTakenMsec = -1;
 
     public KeyDerivationTasks(KeyCrypterScrypt scrypt, String password, @Nullable Duration targetTime) {
-        keyDerivationTask = new Task<>() {
+        keyDerivationTask = new Task<KeyParameter>() {
             @Override
             protected KeyParameter call() throws Exception {
                 long start = System.currentTimeMillis();
@@ -63,7 +63,7 @@ public class KeyDerivationTasks {
 
         // And the fake progress meter ... if the vals were calculated correctly progress bar should reach 100%
         // a brief moment after the keys were derived successfully.
-        progressTask = new Task<>() {
+        progressTask = new Task<Void>() {
             private KeyParameter aesKey;
 
             @Override

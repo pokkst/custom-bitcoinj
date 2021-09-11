@@ -23,6 +23,7 @@ import org.slf4j.LoggerFactory;
 import java.io.*;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 import static com.google.common.base.Preconditions.checkState;
 
@@ -40,6 +41,9 @@ public abstract class Message {
 
     public static final int UNKNOWN_LENGTH = Integer.MIN_VALUE;
 
+    // Useful to ensure serialize/deserialize are consistent with each other.
+    private static final boolean SELF_CHECK = false;
+
     // The offset is how many bytes into the provided byte array this message payload starts at.
     protected int offset;
     // The cursor keeps track of where we are in the byte array as we parse it.
@@ -54,6 +58,8 @@ public abstract class Message {
     protected boolean recached = false;
     protected MessageSerializer serializer;
 
+    protected int protocolVersion;
+
     protected NetworkParameters params;
 
     protected Message() {
@@ -62,6 +68,7 @@ public abstract class Message {
 
     protected Message(NetworkParameters params) {
         this.params = params;
+        this.protocolVersion = params.getProtocolVersionNum(NetworkParameters.ProtocolVersion.CURRENT);
         this.serializer = params.getDefaultSerializer();
     }
 
@@ -81,7 +88,8 @@ public abstract class Message {
      * @throws ProtocolException
      */
     protected Message(NetworkParameters params, byte[] payload, int offset, int protocolVersion, MessageSerializer serializer, int length) throws ProtocolException {
-        this.serializer = serializer.withProtocolVersion(protocolVersion);
+        this.serializer = serializer;
+        this.protocolVersion = protocolVersion;
         this.params = params;
         this.payload = payload;
         this.cursor = this.offset = offset;
@@ -93,17 +101,34 @@ public abstract class Message {
             checkState(false, "Length field has not been set in constructor for %s after parse.",
                        getClass().getSimpleName());
         
+        if (SELF_CHECK) {
+            selfCheck(payload, offset);
+        }
+        
         if (!serializer.isParseRetainMode())
             this.payload = null;
     }
 
+    private void selfCheck(byte[] payload, int offset) {
+        if (!(this instanceof VersionMessage)) {
+            byte[] payloadBytes = new byte[cursor - offset];
+            System.arraycopy(payload, offset, payloadBytes, 0, cursor - offset);
+            byte[] reserialized = bitcoinSerialize();
+            if (!Arrays.equals(reserialized, payloadBytes))
+                throw new RuntimeException("Serialization is wrong: \n" +
+                        Utils.HEX.encode(reserialized) + " vs \n" +
+                        Utils.HEX.encode(payloadBytes));
+        }
+    }
+
     protected Message(NetworkParameters params, byte[] payload, int offset) throws ProtocolException {
-        this(params, payload, offset, params.getDefaultSerializer().getProtocolVersion(),
+        this(params, payload, offset, params.getProtocolVersionNum(NetworkParameters.ProtocolVersion.CURRENT),
              params.getDefaultSerializer(), UNKNOWN_LENGTH);
     }
 
     protected Message(NetworkParameters params, byte[] payload, int offset, MessageSerializer serializer, int length) throws ProtocolException {
-        this(params, payload, offset, serializer.getProtocolVersion(), serializer, length);
+        this(params, payload, offset, params.getProtocolVersionNum(NetworkParameters.ProtocolVersion.CURRENT),
+             serializer, length);
     }
 
     // These methods handle the serialization/deserialization using the custom Bitcoin protocol.
@@ -146,17 +171,6 @@ public abstract class Message {
 
     public boolean isRecached() {
         return recached;
-    }
-
-    /**
-     * Overrides the message serializer.
-     * @param serializer the new serializer
-     */
-    public void setSerializer(MessageSerializer serializer) {
-        if (!this.serializer.equals(serializer)) {
-            this.serializer = serializer;
-            unCache();
-        }
     }
 
     /**
@@ -315,14 +329,10 @@ public abstract class Message {
         }
     }
 
-    private void checkReadLength(int length) throws ProtocolException {
+    protected byte[] readBytes(int length) throws ProtocolException {
         if ((length > MAX_SIZE) || (cursor + length > payload.length)) {
             throw new ProtocolException("Claimed value length too large: " + length);
         }
-    }
-
-    protected byte[] readBytes(int length) throws ProtocolException {
-        checkReadLength(length);
         try {
             byte[] b = new byte[length];
             System.arraycopy(payload, cursor, b, 0, length);
@@ -332,12 +342,7 @@ public abstract class Message {
             throw new ProtocolException(e);
         }
     }
-
-    protected byte readByte() throws ProtocolException {
-        checkReadLength(1);
-        return payload[cursor++];
-    }
-
+    
     protected byte[] readByteArray() throws ProtocolException {
         long len = readVarInt();
         return readBytes((int)len);

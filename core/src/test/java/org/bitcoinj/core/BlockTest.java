@@ -23,7 +23,6 @@ import org.bitcoinj.core.AbstractBlockChain.NewBlockType;
 import org.bitcoinj.params.MainNetParams;
 import org.bitcoinj.params.TestNet3Params;
 import org.bitcoinj.params.UnitTestParams;
-import org.bitcoinj.script.Script;
 import org.bitcoinj.script.ScriptOpCodes;
 import org.bitcoinj.wallet.Wallet;
 import org.bitcoinj.wallet.Wallet.BalanceType;
@@ -136,7 +135,7 @@ public class BlockTest {
         // proves that transaction serialization works, along with all its subobjects like scripts and in/outpoints.
         //
         // NB: This tests the bitcoin serialization protocol.
-        assertArrayEquals(block700000Bytes, block700000.bitcoinSerialize());
+        assertTrue(Arrays.equals(block700000Bytes, block700000.bitcoinSerialize()));
     }
     
     @Test
@@ -221,7 +220,7 @@ public class BlockTest {
         ECKey miningKey = DumpedPrivateKey.fromBase58(MAINNET, MINING_PRIVATE_KEY).getKey();
         assertNotNull(miningKey);
         Context context = new Context(MAINNET);
-        Wallet wallet = Wallet.createDeterministic(context, Script.ScriptType.P2PKH);
+        Wallet wallet = new Wallet(context);
         wallet.importKey(miningKey);
 
         // Initial balance should be zero by construction.

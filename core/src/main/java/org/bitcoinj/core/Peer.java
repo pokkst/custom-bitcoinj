@@ -16,6 +16,8 @@
 
 package org.bitcoinj.core;
 
+import com.google.common.base.Objects;
+import com.google.common.collect.Lists;
 import org.bitcoinj.core.listeners.*;
 import org.bitcoinj.net.AbstractTimeoutHandler;
 import org.bitcoinj.net.NioClient;
@@ -64,7 +66,8 @@ import static com.google.common.base.Preconditions.checkState;
  */
 public class Peer extends PeerSocketHandler {
     private static final Logger log = LoggerFactory.getLogger(Peer.class);
-    protected final ReentrantLock lock = Threading.lock(Peer.class);
+
+    protected final ReentrantLock lock = Threading.lock("peer");
 
     private final NetworkParameters params;
     private final AbstractBlockChain blockChain;
@@ -130,7 +133,6 @@ public class Peer extends PeerSocketHandler {
     // to keep it pinned to the root set if they care about this data.
     @SuppressWarnings("MismatchedQueryAndUpdateOfCollection")
     private final HashSet<TransactionConfidence> pendingTxDownloads = new HashSet<>();
-    private static final int PENDING_TX_DOWNLOADS_LIMIT = 100;
     // The lowest version number we're willing to accept. Lower than this will result in an immediate disconnect.
     private volatile int vMinProtocolVersion;
     // When an API user explicitly requests a block or transaction from a peer, the InventoryItem is put here
@@ -152,8 +154,6 @@ public class Peer extends PeerSocketHandler {
     private final ReentrantLock lastPingTimesLock = new ReentrantLock();
     @GuardedBy("lastPingTimesLock") private long[] lastPingTimes = null;
     private final CopyOnWriteArrayList<PendingPing> pendingPings;
-    // Disconnect from a peer that is not responding to Pings
-    private static final int PENDING_PINGS_LIMIT = 50;
     private static final int PING_MOVING_AVERAGE_WINDOW = 20;
 
     private volatile VersionMessage vPeerVersionMessage;
@@ -175,8 +175,18 @@ public class Peer extends PeerSocketHandler {
                 }
             }, MoreExecutors.directExecutor());
 
-    /** @deprecated Use {@link #Peer(NetworkParameters, VersionMessage, PeerAddress, AbstractBlockChain)}. */
-    @Deprecated
+    /**
+     * <p>Construct a peer that reads/writes from the given block chain.</p>
+     *
+     * <p>Note that this does <b>NOT</b> make a connection to the given remoteAddress, it only creates a handler for a
+     * connection. If you want to create a one-off connection, create a Peer and pass it to
+     * {@link NioClientManager#openConnection(SocketAddress, StreamConnection)}
+     * or
+     * {@link NioClient#NioClient(SocketAddress, StreamConnection, int)}.</p>
+     *
+     * <p>The remoteAddress provided should match the remote address of the peer which is being connected to, and is
+     * used to keep track of which peers relayed transactions and offer more descriptive logging.</p>
+     */
     public Peer(NetworkParameters params, VersionMessage ver, @Nullable AbstractBlockChain chain, PeerAddress remoteAddress) {
         this(params, ver, remoteAddress, chain);
     }
@@ -472,6 +482,8 @@ public class Peer extends PeerSocketHandler {
             processAddressMessage((AddressMessage) m);
         } else if (m instanceof HeadersMessage) {
             processHeaders((HeadersMessage) m);
+        } else if (m instanceof AlertMessage) {
+            processAlert((AlertMessage) m);
         } else if (m instanceof VersionMessage) {
             processVersionMessage((VersionMessage) m);
         } else if (m instanceof VersionAck) {
@@ -609,6 +621,22 @@ public class Peer extends PeerSocketHandler {
                     break;
                 }
             }
+        }
+    }
+
+    protected void processAlert(AlertMessage m) {
+        try {
+            if (log.isDebugEnabled()) {
+                if (m.isSignatureValid())
+                    log.debug("Received alert from peer {}: {}", this, m.getStatusBar());
+                else
+                    log.debug("Received alert with invalid signature from peer {}: {}", this, m.getStatusBar());
+            }
+        } catch (Throwable t) {
+            // Signature checking can FAIL on Android platforms before Gingerbread apparently due to bugs in their
+            // BigInteger implementations! See https://github.com/bitcoinj/bitcoinj/issues/526 for discussion. As
+            // alerts are just optional and not that useful, we just swallow the error here.
+            log.error("Failed to check signature: bug in platform libraries?", t);
         }
     }
 
@@ -864,7 +892,7 @@ public class Peer extends PeerSocketHandler {
         lock.lock();
         try {
             // Build the request for the missing dependencies.
-            List<ListenableFuture<Transaction>> futures = new ArrayList<>();
+            List<ListenableFuture<Transaction>> futures = Lists.newArrayList();
             GetDataMessage getdata = new GetDataMessage(params);
             if (needToRequest.size() > 1)
                 log.info("{}: Requesting {} transactions for depth {} dep resolution", getAddress(), needToRequest.size(), depth + 1);
@@ -880,7 +908,7 @@ public class Peer extends PeerSocketHandler {
                 public void onSuccess(List<Transaction> transactions) {
                     // Once all transactions either were received, or we know there are no more to come ...
                     // Note that transactions will contain "null" for any positions that weren't successful.
-                    List<ListenableFuture<Object>> childFutures = new LinkedList<>();
+                    List<ListenableFuture<Object>> childFutures = Lists.newLinkedList();
                     for (Transaction tx : transactions) {
                         if (tx == null) continue;
                         log.info("{}: Downloaded dependency of {}: {}", getAddress(), rootTxHash, tx.getTxId());
@@ -1186,11 +1214,6 @@ public class Peer extends PeerSocketHandler {
                 if (log.isDebugEnabled())
                     log.debug("{}: getdata on tx {}", getAddress(), item.hash);
                 getdata.addTransaction(item.hash, vPeerVersionMessage.isWitnessSupported());
-                if (pendingTxDownloads.size() > PENDING_TX_DOWNLOADS_LIMIT) {
-                    log.info("{}: Too many pending transactions, disconnecting", this);
-                    close();
-                    return;
-                }
                 // Register with the garbage collector that we care about the confidence data for a while.
                 pendingTxDownloads.add(conf);
             }
@@ -1405,7 +1428,7 @@ public class Peer extends PeerSocketHandler {
         StoredBlock chainHead = blockChain.getChainHead();
         Sha256Hash chainHeadHash = chainHead.getHeader().getHash();
         // Did we already make this request? If so, don't do it again.
-        if (Objects.equals(lastGetBlocksBegin, chainHeadHash) && Objects.equals(lastGetBlocksEnd, toHash)) {
+        if (Objects.equal(lastGetBlocksBegin, chainHeadHash) && Objects.equal(lastGetBlocksEnd, toHash)) {
             log.info("blockChainDownloadLocked({}): ignoring duplicated request: {}", toHash, chainHeadHash);
             for (Sha256Hash hash : pendingBlockDownloads)
                 log.info("Pending block download: {}", hash);
@@ -1531,10 +1554,6 @@ public class Peer extends PeerSocketHandler {
         final VersionMessage ver = vPeerVersionMessage;
         if (!ver.isPingPongSupported())
             throw new ProtocolException("Peer version is too low for measurable pings: " + ver);
-        if (pendingPings.size() > PENDING_PINGS_LIMIT) {
-            log.info("{}: Too many pending pings, disconnecting", this);
-            close();
-        }
         PendingPing pendingPing = new PendingPing(nonce);
         pendingPings.add(pendingPing);
         sendMessage(new Ping(pendingPing.nonce));

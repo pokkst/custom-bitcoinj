@@ -17,6 +17,7 @@
 
 package org.bitcoinj.core;
 
+import com.google.common.base.Objects;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -24,7 +25,6 @@ import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
-import java.util.Objects;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -71,7 +71,7 @@ public class PeerAddress extends ChildMessage {
         super(params);
         this.addr = checkNotNull(addr);
         this.port = port;
-        setSerializer(serializer.withProtocolVersion(protocolVersion));
+        this.protocolVersion = protocolVersion;
         this.services = services;
         length = isSerializeTime() ? MESSAGE_SIZE : MESSAGE_SIZE - 4;
     }
@@ -107,6 +107,7 @@ public class PeerAddress extends ChildMessage {
         super(params);
         this.hostname = hostname;
         this.port = port;
+        this.protocolVersion = params.getProtocolVersionNum(NetworkParameters.ProtocolVersion.CURRENT);
         this.services = BigInteger.ZERO;
     }
 
@@ -139,7 +140,7 @@ public class PeerAddress extends ChildMessage {
     }
 
     private boolean isSerializeTime() {
-        return serializer.getProtocolVersion() >= 31402 && !(parent instanceof VersionMessage);
+        return protocolVersion >= 31402 && !(parent instanceof VersionMessage);
     }
 
     @Override
@@ -208,7 +209,7 @@ public class PeerAddress extends ChildMessage {
 
     @Override
     public int hashCode() {
-        return Objects.hash(addr, port, time, services);
+        return Objects.hashCode(addr, port, time, services);
     }
     
     public InetSocketAddress toSocketAddress() {

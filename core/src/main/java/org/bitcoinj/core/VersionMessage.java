@@ -17,6 +17,7 @@
 package org.bitcoinj.core;
 
 import com.google.common.base.Joiner;
+import com.google.common.base.Objects;
 import com.google.common.net.InetAddresses;
 
 import javax.annotation.Nullable;
@@ -28,7 +29,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
-import java.util.Objects;
 
 /**
  * <p>A VersionMessage holds information exchanged during connection setup with another peer. Most of the fields are not
@@ -44,7 +44,7 @@ import java.util.Objects;
 public class VersionMessage extends Message {
 
     /** The version of this library release, as a string. */
-    public static final String BITCOINJ_VERSION = "0.16-SNAPSHOT";
+    public static final String BITCOINJ_VERSION = "0.15.10";
     /** The value that is prepended to the subVer field of this application. */
     public static final String LIBRARY_SUBVER = "/bitcoinj:" + BITCOINJ_VERSION + "/";
 
@@ -106,7 +106,7 @@ public class VersionMessage extends Message {
     
     public VersionMessage(NetworkParameters params, int newBestHeight) {
         super(params);
-        clientVersion = serializer.getProtocolVersion();
+        clientVersion = params.getProtocolVersionNum(NetworkParameters.ProtocolVersion.CURRENT);
         localServices = 0;
         time = Utils.currentTimeSeconds();
         // Note that the Bitcoin Core doesn't do anything with these, and finding out your own external IP address
@@ -202,7 +202,7 @@ public class VersionMessage extends Message {
 
     @Override
     public int hashCode() {
-        return Objects.hash(bestHeight, clientVersion, localServices,
+        return Objects.hashCode(bestHeight, clientVersion, localServices,
             time, subVer, receivingAddr, fromAddr, relayTxesBeforeFilter);
     }
 

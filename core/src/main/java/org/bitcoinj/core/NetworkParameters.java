@@ -17,6 +17,7 @@
 
 package org.bitcoinj.core;
 
+import com.google.common.base.Objects;
 import org.bitcoinj.core.Block;
 import org.bitcoinj.core.StoredBlock;
 import org.bitcoinj.core.VerificationException;
@@ -45,6 +46,11 @@ import org.bitcoinj.utils.VersionTally;
  * them, you are encouraged to call the static get() methods on each specific params class directly.</p>
  */
 public abstract class NetworkParameters {
+    /**
+     * The alert signing key originally owned by Satoshi, and now passed on to Gavin along with a few others.
+     */
+    public static final byte[] SATOSHI_KEY = Utils.HEX.decode("04fc9702847840aaf195de8442ebecedf5b095cdbb9bc716bda9110971b28a49e0ead8564ff0db22209e0374782c093bb899692d524e9d6a6956e7c5ecbcd68284");
+
     /** The string returned by getId() for the main, production network where people trade things. */
     public static final String ID_MAINNET = "org.bitcoin.production";
     /** The string returned by getId() for the testnet. */
@@ -64,7 +70,7 @@ public abstract class NetworkParameters {
 
     // TODO: Seed nodes should be here as well.
 
-    protected final Block genesisBlock;
+    protected Block genesisBlock;
     protected BigInteger maxTarget;
     protected int port;
     protected long packetMagic;  // Indicates message origin network and is used to seek to the next message when stream state is unknown.
@@ -74,6 +80,7 @@ public abstract class NetworkParameters {
     protected String segwitAddressHrp;
     protected int interval;
     protected int targetTimespan;
+    protected byte[] alertSigningKey;
     protected int bip32HeaderP2PKHpub;
     protected int bip32HeaderP2PKHpriv;
     protected int bip32HeaderP2WPKHpub;
@@ -103,6 +110,7 @@ public abstract class NetworkParameters {
     protected volatile transient MessageSerializer defaultSerializer = null;
 
     protected NetworkParameters() {
+        alertSigningKey = SATOSHI_KEY;
         genesisBlock = createGenesis(this);
     }
 
@@ -168,7 +176,7 @@ public abstract class NetworkParameters {
 
     @Override
     public int hashCode() {
-        return Objects.hash(getId());
+        return Objects.hashCode(getId());
     }
 
     /** Returns the network parameters for the given string ID or NULL if not recognized. */
@@ -326,6 +334,14 @@ public abstract class NetworkParameters {
         return maxTarget;
     }
 
+    /**
+     * The key used to sign {@link AlertMessage}s. You can use {@link ECKey#verify(byte[], byte[], byte[])} to verify
+     * signatures using it.
+     */
+    public byte[] getAlertSigningKey() {
+        return alertSigningKey;
+    }
+
     /** Returns the 4 byte header for BIP32 wallet P2PKH - public key part. */
     public int getBip32HeaderP2PKHpub() {
         return bip32HeaderP2PKHpub;
@@ -352,8 +368,10 @@ public abstract class NetworkParameters {
      */
     public abstract Coin getMaxMoney();
 
-    /** @deprecated use {@link TransactionOutput#getMinNonDustValue()} */
-    @Deprecated
+    /**
+     * Any standard (ie P2PKH) output smaller than this value will
+     * most likely be rejected by the network.
+     */
     public abstract Coin getMinNonDustOutput();
 
     /**
