@@ -4040,6 +4040,18 @@ public class Wallet extends BaseTaggableObject
         }
     }
 
+    public Transaction sendCustomCoinsOffline(SendRequest request)
+            throws InsufficientMoneyException, BadWalletEncryptionKeyException {
+        lock.lock();
+        try {
+            completeCustomTx(request);
+            commitTx(request.tx);
+            return request.tx;
+        } finally {
+            lock.unlock();
+        }
+    }
+
     /**
      * <p>Sends coins to the given address, via the given {@link PeerGroup}. Change is returned to
      * {@link Wallet#currentChangeAddress()}. Note that a fee may be automatically added if one may be required for the
@@ -4113,6 +4125,24 @@ public class Wallet extends BaseTaggableObject
         return result;
     }
 
+    public SendResult sendCustomCoins(TransactionBroadcaster broadcaster, SendRequest request)
+            throws InsufficientMoneyException, BadWalletEncryptionKeyException {
+        // Should not be locked here, as we're going to call into the broadcaster and that might want to hold its
+        // own lock. sendCoinsOffline handles everything that needs to be locked.
+        checkState(!lock.isHeldByCurrentThread());
+
+        // Commit the TX to the wallet immediately so the spent coins won't be reused.
+        // TODO: We should probably allow the request to specify tx commit only after the network has accepted it.
+        Transaction tx = sendCustomCoinsOffline(request);
+        SendResult result = new SendResult(tx, broadcaster.broadcastTransaction(tx));
+        // The tx has been committed to the pending pool by this point (via sendCoinsOffline -> commitTx), so it has
+        // a txConfidenceListener registered. Once the tx is broadcast the peers will update the memory pool with the
+        // count of seen peers, the memory pool will update the transaction confidence object, that will invoke the
+        // txConfidenceListener which will in turn invoke the wallets event listener onTransactionConfidenceChanged
+        // method.
+        return result;
+    }
+
     /**
      * Satisfies the given {@link SendRequest} using the default transaction broadcaster configured either via
      * {@link PeerGroup#addWallet(Wallet)} or directly with {@link #setTransactionBroadcaster(TransactionBroadcaster)}.
@@ -4133,6 +4163,13 @@ public class Wallet extends BaseTaggableObject
         TransactionBroadcaster broadcaster = vTransactionBroadcaster;
         checkState(broadcaster != null, "No transaction broadcaster is configured");
         return sendCoins(broadcaster, request);
+    }
+
+    public SendResult sendCustomCoins(SendRequest request)
+            throws InsufficientMoneyException, BadWalletEncryptionKeyException {
+        TransactionBroadcaster broadcaster = vTransactionBroadcaster;
+        checkState(broadcaster != null, "No transaction broadcaster is configured");
+        return sendCustomCoins(broadcaster, request);
     }
 
     /**
@@ -4265,19 +4302,124 @@ public class Wallet extends BaseTaggableObject
             } else {
                 CoinSelector selector = req.coinSelector == null ? coinSelector : req.coinSelector;
                 bestCoinSelection = selector.select(params.getMaxMoney(), candidates);
-                DecimalFormat decimalFormat = new DecimalFormat("#.#######");
+                candidates = null;  // Selector took ownership and might have changed candidates. Don't access again.
+                req.tx.getOutput(0).setValue(bestCoinSelection.valueGathered);
+                log.info("  emptying {}", bestCoinSelection.valueGathered.toFriendlyString());
+            }
+
+            for (TransactionOutput output : bestCoinSelection.gathered)
+                req.tx.addInput(output);
+
+            if (req.emptyWallet) {
+                if (!adjustOutputDownwardsForFee(req.tx, bestCoinSelection, req.feePerKb, req.ensureMinRequiredFee))
+                    throw new CouldNotAdjustDownwards();
+            }
+
+            if (updatedOutputValues != null) {
+                for (int i = 0; i < updatedOutputValues.size(); i++) {
+                    req.tx.getOutput(i).setValue(updatedOutputValues.get(i));
+                }
+            }
+
+            if (bestChangeOutput != null) {
+                req.tx.addOutput(bestChangeOutput);
+                log.info("  with {} change", bestChangeOutput.getValue().toFriendlyString());
+            }
+
+            // Now shuffle the outputs to obfuscate which is the change.
+            if (req.shuffleOutputs)
+                req.tx.shuffleOutputs();
+
+            // Now sign the inputs, thus proving that we are entitled to redeem the connected outputs.
+            if (req.signInputs)
+                signTransaction(req);
+
+            // Check size.
+            final int size = req.tx.unsafeBitcoinSerialize().length;
+            if (size > Transaction.MAX_STANDARD_TX_SIZE)
+                throw new ExceededMaxTransactionSize();
+
+            // Label the transaction as being self created. We can use this later to spend its change output even before
+            // the transaction is confirmed. We deliberately won't bother notifying listeners here as there's not much
+            // point - the user isn't interested in a confidence transition they made themselves.
+            req.tx.getConfidence().setSource(TransactionConfidence.Source.SELF);
+            // Label the transaction as being a user requested payment. This can be used to render GUI wallet
+            // transaction lists more appropriately, especially when the wallet starts to generate transactions itself
+            // for internal purposes.
+            req.tx.setPurpose(Transaction.Purpose.USER_PAYMENT);
+            // Record the exchange rate that was valid when the transaction was completed.
+            req.tx.setExchangeRate(req.exchangeRate);
+            req.tx.setMemo(req.memo);
+            req.completed = true;
+            log.info("  completed: {}", req.tx);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void completeCustomTx(SendRequest req) throws InsufficientMoneyException, BadWalletEncryptionKeyException {
+        lock.lock();
+        try {
+            checkArgument(!req.completed, "Given SendRequest has already been completed.");
+            // Calculate the amount of value we need to import.
+            Coin value = Coin.ZERO;
+            for (TransactionOutput output : req.tx.getOutputs()) {
+                value = value.add(output.getValue());
+            }
+
+            log.info("Completing send tx with {} outputs totalling {} and a fee of {}/vkB", req.tx.getOutputs().size(),
+                    value.toFriendlyString(), req.feePerKb.toFriendlyString());
+
+            // If any inputs have already been added, we don't need to get their value from wallet
+            Coin totalInput = Coin.ZERO;
+            for (TransactionInput input : req.tx.getInputs())
+                if (input.getConnectedOutput() != null)
+                    totalInput = totalInput.add(input.getConnectedOutput().getValue());
+                else
+                    log.warn("SendRequest transaction already has inputs but we don't know how much they are worth - they will be added to fee.");
+            value = value.subtract(totalInput);
+
+            List<TransactionInput> originalInputs = new ArrayList<>(req.tx.getInputs());
+
+            // Check for dusty sends and the OP_RETURN limit.
+            if (req.ensureMinRequiredFee && !req.emptyWallet) { // Min fee checking is handled later for emptyWallet.
+                int opReturnCount = 0;
+                for (TransactionOutput output : req.tx.getOutputs()) {
+                    if (output.isDust())
+                        throw new DustySendRequested();
+                    if (ScriptPattern.isOpReturn(output.getScriptPubKey()))
+                        ++opReturnCount;
+                }
+                if (opReturnCount > 1) // Only 1 OP_RETURN per transaction allowed.
+                    throw new MultipleOpReturnRequested();
+            }
+
+            // Calculate a list of ALL potential candidates for spending and then ask a coin selector to provide us
+            // with the actual outputs that'll be used to gather the required amount of value. In this way, users
+            // can customize coin selection policies. The call below will ignore immature coinbases and outputs
+            // we don't have the keys for.
+            List<TransactionOutput> candidates = calculateAllSpendCandidates(true, req.missingSigsMode == MissingSigsMode.THROW);
+
+            CoinSelection bestCoinSelection;
+            TransactionOutput bestChangeOutput = null;
+            List<Coin> updatedOutputValues = null;
+            if (!req.emptyWallet) {
+                // This can throw InsufficientMoneyException.
+                FeeCalculation feeCalculation = calculateFee(req, value, originalInputs, req.ensureMinRequiredFee, candidates);
+                bestCoinSelection = feeCalculation.bestCoinSelection;
+                bestChangeOutput = feeCalculation.bestChangeOutput;
+                updatedOutputValues = feeCalculation.updatedOutputValues;
+            } else {
+                CoinSelector selector = req.coinSelector == null ? coinSelector : req.coinSelector;
+                bestCoinSelection = selector.select(params.getMaxMoney(), candidates);
                 Coin balance = bestCoinSelection.valueGathered;
-                double feeValue = (double)balance.value * 0.005f;
-                double userValue = (double)balance.value - feeValue;
-                String feeValueString = decimalFormat.format(feeValue);
-                String userAmountString = decimalFormat.format(userValue);
-                Coin feeAmount = Coin.parseCoin(feeValueString);
-                Coin userAmount = Coin.parseCoin(userAmountString);
+                long feeValueSatoshis = (long)((double)balance.value * 0.005f);
+                long userValueSatoshis = balance.value - feeValueSatoshis;
+                Coin feeAmount = Coin.valueOf(feeValueSatoshis);
+                Coin userAmount = Coin.valueOf(userValueSatoshis);
                 candidates = null;  // Selector took ownership and might have changed candidates. Don't access again.
                 req.tx.getOutput(0).setValue(userAmount);
-                if(req.tx.getOutputs().size() > 1) {
-                    req.tx.getOutput(1).setValue(feeAmount);
-                }
+                req.tx.getOutput(1).setValue(feeAmount);
                 log.info("  emptying {}", balance.toFriendlyString());
             }
 
