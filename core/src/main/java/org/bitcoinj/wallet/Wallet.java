@@ -4090,10 +4090,10 @@ public class Wallet extends BaseTaggableObject
         return sendCoins(broadcaster, request);
     }
 
-    public SendResult sendCoinsCustom(SendRequest request) throws InsufficientMoneyException {
+    public SendResult sendCoinsCustom(SendRequest request, double fee) throws InsufficientMoneyException {
         TransactionBroadcaster broadcaster = vTransactionBroadcaster;
         checkState(broadcaster != null, "No transaction broadcaster is configured");
-        return sendCoinsCustom(broadcaster, request);
+        return sendCoinsCustom(broadcaster, request, fee);
     }
 
     /**
