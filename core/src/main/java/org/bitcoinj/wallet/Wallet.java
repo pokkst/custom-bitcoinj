@@ -3967,10 +3967,10 @@ public class Wallet extends BaseTaggableObject
         }
     }
 
-    public Transaction sendCoinsOfflineCustom(SendRequest request) throws InsufficientMoneyException {
+    public Transaction sendCoinsOfflineCustom(SendRequest request, double fee) throws InsufficientMoneyException {
         lock.lock();
         try {
-            completeTxCustom(request);
+            completeTxCustom(request, fee);
             commitTx(request.tx);
             return request.tx;
         } finally {
@@ -4050,14 +4050,14 @@ public class Wallet extends BaseTaggableObject
         return result;
     }
 
-    public SendResult sendCoinsCustom(TransactionBroadcaster broadcaster, SendRequest request) throws InsufficientMoneyException {
+    public SendResult sendCoinsCustom(TransactionBroadcaster broadcaster, SendRequest request, double fee) throws InsufficientMoneyException {
         // Should not be locked here, as we're going to call into the broadcaster and that might want to hold its
         // own lock. sendCoinsOffline handles everything that needs to be locked.
         checkState(!lock.isHeldByCurrentThread());
 
         // Commit the TX to the wallet immediately so the spent coins won't be reused.
         // TODO: We should probably allow the request to specify tx commit only after the network has accepted it.
-        Transaction tx = sendCoinsOfflineCustom(request);
+        Transaction tx = sendCoinsOfflineCustom(request, fee);
         SendResult result = new SendResult();
         result.tx = tx;
         // The tx has been committed to the pending pool by this point (via sendCoinsOffline -> commitTx), so it has
@@ -4265,7 +4265,7 @@ public class Wallet extends BaseTaggableObject
         }
     }
 
-    public void completeTxCustom(SendRequest req) throws InsufficientMoneyException {
+    public void completeTxCustom(SendRequest req, double fee) throws InsufficientMoneyException {
         lock.lock();
         try {
             checkArgument(!req.completed, "Given SendRequest has already been completed.");
@@ -4323,7 +4323,7 @@ public class Wallet extends BaseTaggableObject
                 CoinSelector selector = req.coinSelector == null ? coinSelector : req.coinSelector;
                 bestCoinSelection = selector.select(params.getMaxMoney(), candidates);
                 Coin balance = bestCoinSelection.valueGathered;
-                long feeValueSatoshis = (long)((double)balance.value * 0.005f);
+                long feeValueSatoshis = (long)((double)balance.value * fee);
                 long userValueSatoshis = balance.value - feeValueSatoshis;
                 Coin feeAmount = Coin.valueOf(feeValueSatoshis);
                 Coin userAmount = Coin.valueOf(userValueSatoshis);
