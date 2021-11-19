@@ -17,12 +17,16 @@
 
 package org.bitcoinj.params;
 
-import org.bitcoinj.core.*;
-import org.bitcoinj.net.discovery.*;
+import java.net.URI;
 
-import java.net.*;
+import org.bitcoinj.core.Block;
+import org.bitcoinj.core.ECKey;
+import org.bitcoinj.core.Sha256Hash;
+import org.bitcoinj.core.Utils;
+import org.bitcoinj.net.discovery.HttpDiscovery;
 
-import static com.google.common.base.Preconditions.*;
+
+import static com.google.common.base.Preconditions.checkState;
 
 /**
  * Parameters for the main production network on which people trade goods and services.
@@ -31,18 +35,24 @@ public class MainNetParams extends AbstractBitcoinNetParams {
     public static final int MAINNET_MAJORITY_WINDOW = 1000;
     public static final int MAINNET_MAJORITY_REJECT_BLOCK_OUTDATED = 950;
     public static final int MAINNET_MAJORITY_ENFORCE_BLOCK_UPGRADE = 750;
+    private static final long GENESIS_TIME = 1231006505;
+    private static final long GENESIS_NONCE = 2083236893;
+    private static final Sha256Hash GENESIS_HASH = Sha256Hash.wrap("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f");
 
     public MainNetParams() {
         super();
-        interval = INTERVAL;
+        id = ID_MAINNET;
+
         targetTimespan = TARGET_TIMESPAN;
-        maxTarget = Utils.decodeCompactBits(0x1d00ffffL);
+        maxTarget = Utils.decodeCompactBits(Block.STANDARD_MAX_DIFFICULTY_TARGET);
+
+        port = 8333;
+        packetMagic = 0xf9beb4d9L;
         dumpedPrivateKeyHeader = 128;
         addressHeader = 0;
         p2shHeader = 5;
         segwitAddressHrp = "bc";
-        port = 8333;
-        packetMagic = 0xf9beb4d9L;
+        spendableCoinbaseDepth = 100;
         bip32HeaderP2PKHpub = 0x0488b21e; // The 4 byte header that serializes in base58 to "xpub".
         bip32HeaderP2PKHpriv = 0x0488ade4; // The 4 byte header that serializes in base58 to "xprv"
         bip32HeaderP2WPKHpub = 0x04b24746; // The 4 byte header that serializes in base58 to "zpub".
@@ -51,16 +61,6 @@ public class MainNetParams extends AbstractBitcoinNetParams {
         majorityEnforceBlockUpgrade = MAINNET_MAJORITY_ENFORCE_BLOCK_UPGRADE;
         majorityRejectBlockOutdated = MAINNET_MAJORITY_REJECT_BLOCK_OUTDATED;
         majorityWindow = MAINNET_MAJORITY_WINDOW;
-
-        genesisBlock.setDifficultyTarget(0x1d00ffffL);
-        genesisBlock.setTime(1231006505L);
-        genesisBlock.setNonce(2083236893);
-        id = ID_MAINNET;
-        subsidyDecreaseBlockCount = 210000;
-        spendableCoinbaseDepth = 100;
-        String genesisHash = genesisBlock.getHashAsString();
-        checkState(genesisHash.equals("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"),
-                genesisHash);
 
         // This contains (at a minimum) the blocks which are not BIP30 compliant. BIP30 changed how duplicate
         // transactions are handled. Duplicated transactions could occur in the case where a coinbase had the same
@@ -142,6 +142,20 @@ public class MainNetParams extends AbstractBitcoinNetParams {
             instance = new MainNetParams();
         }
         return instance;
+    }
+
+    @Override
+    public Block getGenesisBlock() {
+        synchronized (GENESIS_HASH) {
+            if (genesisBlock == null) {
+                genesisBlock = Block.createGenesis(this);
+                genesisBlock.setDifficultyTarget(Block.STANDARD_MAX_DIFFICULTY_TARGET);
+                genesisBlock.setTime(GENESIS_TIME);
+                genesisBlock.setNonce(GENESIS_NONCE);
+                checkState(genesisBlock.getHash().equals(GENESIS_HASH), "Invalid genesis hash");
+            }
+        }
+        return genesisBlock;
     }
 
     @Override
