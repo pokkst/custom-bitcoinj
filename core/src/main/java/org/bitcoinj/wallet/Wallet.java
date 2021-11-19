@@ -4128,6 +4128,12 @@ public class Wallet extends BaseTaggableObject
         return result;
     }
 
+    public SendResult sendCoinsCustom(SendRequest request, double fee) throws InsufficientMoneyException {
+        TransactionBroadcaster broadcaster = vTransactionBroadcaster;
+        checkState(broadcaster != null, "No transaction broadcaster is configured");
+        return sendCoinsCustom(broadcaster, request, fee);
+    }
+
     public SendResult sendCoinsCustom(TransactionBroadcaster broadcaster, SendRequest request, double fee) throws InsufficientMoneyException {
         // Should not be locked here, as we're going to call into the broadcaster and that might want to hold its
         // own lock. sendCoinsOffline handles everything that needs to be locked.
